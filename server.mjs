@@ -280,6 +280,15 @@ async function handleMessage(msg, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    // Glama connector ownership verification (HTTP challenge).
+    // Token is bound to the Glama claim and carries no personal info;
+    // keep in place so Glama can continue verifying ownership.
+    if (url.pathname === "/.well-known/glama.json") {
+      return Response.json({
+        $schema: "https://glama.ai/mcp/schemas/connector.json",
+        claim: "glama_claim_BiD7E088f0eALyazFRPiTNHAhEUcFwP7",
+      });
+    }
     if (url.pathname !== "/mcp") {
       return new Response("Not found. MCP endpoint is POST /mcp", { status: 404 });
     }
