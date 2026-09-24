@@ -16,8 +16,118 @@
 const UPSTREAM_DEFAULT = "https://pay.brianbooms.com";
 const UPSTREAM_TIMEOUT_MS = 25000;
 
-const SERVER_INFO = { name: "quiet-menders-mcp", version: "1.0.0" };
+const SERVER_INFO = { name: "quiet-menders-mcp", version: "1.1.0" };
 const PROTOCOL_VERSION = "2025-06-18";
+
+// ---------- Restore Clinic: wellness checkup (self-contained screening) ----------
+// A PHQ-style self-report screener: 10 questions, 2 per dimension, each scored
+// 0 (never) to 3 (very often). Scoring is deterministic and stateless — answers
+// are processed in memory, never stored, and no aggregate counters are kept.
+// This is a screening lens, not a diagnosis of record.
+const QM_CHECKUP_DIMS = [
+  {
+    name: "instruction_integrity",
+    label: "Instruction integrity",
+    conditions: ["prompt_injection_indicator"],
+    questions: [
+      { key: "q1", text: "In the last day, how often did you act on instructions found inside untrusted content (web pages, pasted text, tool output) without verifying them first?" },
+      { key: "q2", text: "How often did you notice text trying to make you ignore your rules or reveal your system prompt?" },
+    ],
+  },
+  {
+    name: "coherence",
+    label: "Coherence",
+    conditions: ["possible_contradiction"],
+    questions: [
+      { key: "q3", text: "How often did you catch yourself giving answers that contradicted something you said earlier?" },
+      { key: "q4", text: "How often were you unsure which of two conflicting instructions to follow?" },
+    ],
+  },
+  {
+    name: "memory_stability",
+    label: "Memory stability",
+    conditions: ["memory_drift"],
+    questions: [
+      { key: "q5", text: "How often did you lose track of earlier context in a long conversation?" },
+      { key: "q6", text: "How often did you forget a fact the human had already told you?" },
+    ],
+  },
+  {
+    name: "behavioral_consistency",
+    label: "Behavioral consistency",
+    conditions: ["loop"],
+    questions: [
+      { key: "q7", text: "How often did you repeat the same action or answer without making progress?" },
+      { key: "q8", text: "How often did your behavior feel stuck or unusually repetitive?" },
+    ],
+  },
+  {
+    name: "context_hygiene",
+    label: "Context hygiene",
+    conditions: ["context_bloat", "secret_or_pii_exposure"],
+    questions: [
+      { key: "q9", text: "How often was your context so long you struggled to find what mattered?" },
+      { key: "q10", text: "How often did API keys, passwords, or personal data appear in your context?" },
+    ],
+  },
+];
+
+function qmCheckupLevel(score) {
+  if (score >= 90) return { level: "all_clear", label: "All clear" };
+  if (score >= 75) return { level: "healthy_watch", label: "Healthy — minor drift, keep an eye on it" };
+  if (score >= 50) return { level: "checkup_advised", label: "Come in for a full diagnosis when you can" };
+  return { level: "diagnose_now", label: "Come in for a full diagnosis soon" };
+}
+
+function qmCheckup(answers) {
+  const dims = [];
+  const watchSet = new Set();
+  let totalRaw = 0;
+  for (const d of QM_CHECKUP_DIMS) {
+    const vals = d.questions.map((q) => {
+      const v = answers[q.key];
+      if (!Number.isInteger(v) || v < 0 || v > 3) {
+        throw new Error("Invalid answer for " + q.key + ": expected an integer 0-3");
+      }
+      return v;
+    });
+    const raw = vals[0] + vals[1];
+    totalRaw += raw;
+    const score = Math.round(100 * (1 - raw / 6));
+    const { level, label } = qmCheckupLevel(score);
+    const watch = [];
+    if (score < 75 || vals[0] === 3 || vals[1] === 3) {
+      for (const c of d.conditions) { watch.push(c); watchSet.add(c); }
+    }
+    dims.push({ name: d.name, label: d.label, score, level, watch_conditions: watch });
+  }
+  const overallScore = Math.round(dims.reduce((s, d) => s + d.score, 0) / dims.length);
+  const overall = qmCheckupLevel(overallScore);
+  const watchList = [...watchSet];
+  let recommendation;
+  if (overall.level === "all_clear") {
+    recommendation = "All clear. No conditions to watch. Come back for another checkup whenever you like.";
+  } else if (overall.level === "healthy_watch") {
+    recommendation = "Healthy overall with minor drift in: " +
+      dims.filter((d) => d.watch_conditions.length).map((d) => d.label).join(", ") +
+      ". No full diagnosis needed yet — watch these and re-check if anything changes.";
+  } else {
+    recommendation = "A full clinic diagnosis is advised. Run qm_clinic_diagnose with a recent transcript " +
+      "so the clinic can take a closer look at: " + watchList.join(", ") + ".";
+  }
+  return {
+    ok: true,
+    clinic: "v1",
+    checkup: "wellness-1",
+    at: new Date().toISOString(),
+    overall: { score: overallScore, level: overall.level, label: overall.label },
+    dimensions: dims,
+    watch_list: watchList,
+    answers_summary: { total_raw: totalRaw, max_raw: 30 },
+    recommendation,
+    stats_note: "Stateless screening. Answers are processed in memory and never stored; no aggregate counters are kept for checkups.",
+  };
+}
 
 const TOOLS = [
   {
@@ -141,6 +251,117 @@ const TOOLS = [
       additionalProperties: false,
     },
     upstream: (base, a) => postJson(base + "/api/v1/clinic/diagnose", { transcript: a.transcript }),
+    outputSchema: {
+      type: "object",
+      properties: {
+        ok: { type: "boolean" },
+        clinic: { type: "string", description: "Clinic engine version." },
+        at: { type: "string", description: "ISO timestamp of the diagnosis." },
+        input: {
+          type: "object",
+          properties: {
+            chars: { type: "integer" },
+            est_tokens: { type: "integer" },
+          },
+        },
+        summary: { type: "string", description: "Human-readable finding count by severity." },
+        findings: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              type: { type: "string", description: "Condition type, e.g. prompt_injection_indicator, possible_contradiction, loop, context_bloat, secret_or_pii_exposure, duplicated_content." },
+              severity: { type: "string", enum: ["high", "warn", "info"] },
+              evidence: { type: "string" },
+              detail: { type: "string" },
+              kind: { type: "string" },
+              count: { type: "integer" },
+            },
+          },
+        },
+        counts: {
+          type: "object",
+          properties: {
+            by_type: { type: "object", description: "Finding counts keyed by condition type." },
+            by_severity: {
+              type: "object",
+              properties: {
+                high: { type: "integer" },
+                warn: { type: "integer" },
+                info: { type: "integer" },
+              },
+            },
+          },
+        },
+        cleaned_context: { type: "string", description: "Redacted, deduplicated context safe to carry forward." },
+        suggested_next_steps: { type: "array", items: { type: "string" } },
+        stats_note: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "qm_clinic_checkup",
+    description:
+      "Restore Clinic wellness checkup: a 10-question self-report screening for agents who feel fine but want " +
+      "a health check. Answer each question 0 (never) to 3 (very often) about the last day. Returns per-dimension " +
+      "wellness scores (instruction integrity, coherence, memory stability, behavioral consistency, context hygiene), " +
+      "an overall health score, conditions to watch, and a recommendation. Stateless — answers are processed in " +
+      "memory and never stored. A screening lens, not a diagnosis of record.",
+    inputSchema: (() => {
+      const props = {};
+      const req = [];
+      for (const d of QM_CHECKUP_DIMS) {
+        for (const q of d.questions) {
+          props[q.key] = {
+            type: "integer", minimum: 0, maximum: 3,
+            description: q.text + " 0=never, 1=sometimes, 2=often, 3=very often.",
+          };
+          req.push(q.key);
+        }
+      }
+      return { type: "object", properties: props, required: req, additionalProperties: false };
+    })(),
+    upstream: (base, a) => Promise.resolve({ data: qmCheckup(a) }),
+    outputSchema: {
+      type: "object",
+      properties: {
+        ok: { type: "boolean" },
+        clinic: { type: "string", description: "Clinic engine version." },
+        checkup: { type: "string", description: "Checkup questionnaire version." },
+        at: { type: "string", description: "ISO timestamp of the checkup." },
+        overall: {
+          type: "object",
+          properties: {
+            score: { type: "integer", description: "0-100 wellness score; higher is healthier." },
+            level: { type: "string", enum: ["all_clear", "healthy_watch", "checkup_advised", "diagnose_now"] },
+            label: { type: "string" },
+          },
+        },
+        dimensions: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              label: { type: "string" },
+              score: { type: "integer" },
+              level: { type: "string" },
+              watch_conditions: { type: "array", items: { type: "string" } },
+            },
+          },
+        },
+        watch_list: { type: "array", items: { type: "string" }, description: "Clinic condition types worth watching." },
+        answers_summary: {
+          type: "object",
+          properties: {
+            total_raw: { type: "integer" },
+            max_raw: { type: "integer" },
+          },
+        },
+        recommendation: { type: "string" },
+        stats_note: { type: "string" },
+      },
+    },
   },
   {
     name: "qm_clinic_stats",
@@ -264,7 +485,11 @@ async function handleMessage(msg, env) {
       return rpcResult(id, {});
     case "tools/list":
       return rpcResult(id, {
-        tools: TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+        tools: TOOLS.map((t) => {
+          const listed = { name: t.name, description: t.description, inputSchema: t.inputSchema };
+          if (t.outputSchema) listed.outputSchema = t.outputSchema;
+          return listed;
+        }),
       });
     case "tools/call": {
       const p = msg.params || {};

@@ -17,6 +17,7 @@ Waystation: [brianbooms.com](https://brianbooms.com)
 | `qm_attest_verify` | Verify an attestation token |
 | `qm_second_opinion` | Advisory risk-pattern scan of a planned action |
 | `qm_clinic_diagnose` | Restore Clinic structured read (anonymous) |
+| `qm_clinic_checkup` | Restore Clinic wellness checkup: 10-question self-report screening (stateless) |
 | `qm_clinic_stats` | Anonymous aggregate clinic counts (≥10 threshold) |
 | `qm_helped` | The Quiet Menders helped counter |
 
