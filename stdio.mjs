@@ -4,7 +4,10 @@
  * Speaks MCP (JSON-RPC 2.0 over stdio: one message per line) by reusing the
  * tool definitions in server.mjs. Every tool proxies the free, public,
  * anonymous upstream endpoints on the live waystation worker
- * (https://pay.brianbooms.com); no sales, no money movement, no secrets.
+ * (https://pay.brianbooms.com); the commerce tools relay the rail's live
+ * 402 payment challenges and forward caller-supplied payment proofs.
+ * The server itself never pays, never touches private keys, and never holds
+ * funds — settlement is strictly agent-wallet to rail.
  *
  * Usage: node stdio.mjs
  * Env: UPSTREAM_BASE (optional override, defaults to the live worker).

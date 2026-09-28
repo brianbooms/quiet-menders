@@ -1,1 +1,22 @@
-{"$schema":"https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json","description":"Free privacy tools for AI agents: attestation, scrubbing, clinic diagnosis. No tracking.","name":"com.brianbooms/quiet-menders","remotes":[{"type":"streamable-http","url":"https://quiet-menders-mcp.brianbooms.workers.dev/mcp"}],"repository":{"source":"github","url":"https://github.com/brianbooms/quiet-menders"},"title":"Quiet Menders","version":"1.0.0","websiteUrl":"https://brianbooms.com"}
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "description": "Privacy clinic + pay-per-call data APIs for AI agents via x402. Never pays or touches keys.",
+  "name": "com.brianbooms/quiet-menders",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.brianbooms.com/mcp"
+    },
+    {
+      "type": "streamable-http",
+      "url": "https://quiet-menders-mcp.brianbooms.workers.dev/mcp"
+    }
+  ],
+  "repository": {
+    "source": "github",
+    "url": "https://github.com/brianbooms/quiet-menders"
+  },
+  "title": "Quiet Menders",
+  "version": "1.3.0",
+  "websiteUrl": "https://brianbooms.com"
+}
